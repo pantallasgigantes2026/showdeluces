@@ -45,7 +45,7 @@
         const MULTIPLICADOR_UMBRAL = 1.6; 
 
         let ultimoTiempoParpadeo = 0;
-        const COOLDOWN_PARPADEO = 60; 
+        const COOLDOWN_PARPADEO = 60; // Mantenemos el cooldown solicitado
         let tiempoUltimoPulsoFuerte = 0;
         const TIEMPO_APAGADO_PANTALLA = 300; 
         let estadoLuzActual = false; 
@@ -54,20 +54,19 @@
         startBtn.addEventListener('click', async () => {
             statusText.innerText = "Calibrando sonido ambiente (1s)...";
             try {
-                // OPTIMIZACIÓN ANDROID/iOS: Pedimos video en resolución mínima (64x64) para ahorrar batería y forzar la linterna sin lag de cámara
                 try {
                     const videoStream = await navigator.mediaDevices.getUserMedia({ 
                         video: { 
                             facingMode: { exact: "environment" },
-                            width: { ideal: 64 },
-                            height: { ideal: 64 }
+                            width: { ideal: 128 },
+                            height: { ideal: 128 }
                         } 
                     });
                     const videoTracks = videoStream.getVideoTracks();
-                    // CORRECCIÓN ANDROID: Extraemos estrictamente el primer track individual activo
+                    // SOLUCIÓN CRÍTICA PARA ANDROID CHROME: Guardar el track[0], NO la lista completa
                     if(videoTracks.length > 0) track = videoTracks[0]; 
                 } catch (e) {
-                    console.log("Linterna trasera no disponible en este navegador o sistema.");
+                    console.log("Cámara trasera o linterna no soportada.");
                 }
                 
                 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -156,29 +155,15 @@
                 bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000";
                 bodyElement.style.transform = 'translateZ(0)';
 
-                // FORZAR LINTERNA EN ANDROID Y COMPATIBLES
+                // ACCIÓN DIRECTA SOBRE EL TRACK CORRECTO
                 if (track) {
-                    try {
-                        // Verificamos si el navegador soporta leer las capacidades físicas del hardware
-                        if (typeof track.getCapabilities === 'function') {
-                            const capabilities = track.getCapabilities();
-                            if (capabilities.torch) {
-                                track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
-                            }
-                        } else {
-                            // Salvavidas para navegadores Android antiguos que soportan torch directo sin validar capabilities
-                            track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
-                        }
-                    } catch(e) {}
+                    track.applyConstraints({ advanced: [{ torch: true }] }).catch((e) => console.log(e));
                 }
             } else {
                 bodyElement.style.backgroundColor = "#050505";
 
-                // APAGAR LINTERNA DE INMEDIATO
                 if (track) {
-                    try {
-                        track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
-                    } catch(e) {}
+                    track.applyConstraints({ advanced: [{ torch: false }] }).catch((e) => console.log(e));
                 }
             }
         }
