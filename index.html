@@ -14,13 +14,9 @@
         .footer-zone { margin-bottom: 20px; width: 100%; }
         .status { font-size: 1rem; color: #00ffcc; font-weight: 500; }
         .instruccion-iphone { display: none; margin-top: 15px; font-size: 0.85rem; color: #ffcc00; background: rgba(255, 204, 0, 0.1); padding: 10px; border-radius: 8px; border: 1px solid rgba(255, 204, 0, 0.2); }
-        /* Video oculto necesario para que Android no apague la cámara/flash por inactividad */
-        #hiddenVideo { display: none; width: 1px; height: 1px; }
     </style>
 </head>
 <body>
-    <video id="hiddenVideo" autoplay playsinline muted></video>
-
     <div class="header-zone">
         <h1 id="mainTitle">LIGHTSHOW ESTADIO</h1>
         <p id="mainDesc">Sincroniza tu dispositivo con el sonido local.</p>
@@ -39,7 +35,6 @@
         const statusText = document.getElementById('statusText');
         const iphoneNotice = document.getElementById('iphoneNotice');
         const mainTitle = document.getElementById('mainTitle');
-        const hiddenVideo = document.getElementById('hiddenVideo');
         const bodyElement = document.body;
         let audioContext, analyser, microphone, javascriptNode, track; 
         let isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
@@ -48,40 +43,31 @@
         let umbralDinamico = 50; 
         let ruidosCapturados = [];
         let calibrando = true;
+        
+        // Multiplicador de escala: ayuda a que si calibras en silencio (ej. 20), el umbral suba inteligentemente (ej. 20 * 2.2 = 44) 
+        // evitando que cualquier ruido ambiente active la pantalla por error.
         const MULTIPLICADOR_UMBRAL = 2.2; 
 
         // --- COOLDOWN Y RENDIMIENTO ---
         let ultimoTiempoParpadeo = 0;
-        const COOLDOWN_PARPADEO = 120; // LÍNEA 56: Controla la velocidad del parpadeo (en milisegundos)
+        const COOLDOWN_PARPADEO = 60; // Ajustado a 40ms para permitir flashes rápidos y dinámicos (efecto estrobo)
         let tiempoUltimoPulsoFuerte = 0;
-        const TIEMPO_APAGADO_PANTALLA = 400; 
+        const TIEMPO_APAGADO_PANTALLA = 400; // Si pasa 0.4 segundos sin golpes de dBs, se apaga por completo de inmediato.
         let estadoLuzActual = false; 
 
         startBtn.addEventListener('click', async () => {
             statusText.innerText = "Calibrando sonido ambiente (1s)...";
             try {
-                // Android requiere activar la cámara trasera de forma explícita
-                if (!isIos) {
-                    try {
-                        const videoStream = await navigator.mediaDevices.getUserMedia({ 
-                            video: { facingMode: { exact: "environment" } } 
-                        });
-                        hiddenVideo.srcObject = videoStream; // Engaña a Android para mantener viva la cámara
-                        
-                        // CORRECCIÓN CLAVE: Extraer la pista [0] individual del array
-                        track = videoStream.getVideoTracks()[0]; 
-                    } catch (e) {
-                        console.log("Linterna o cámara trasera no disponible");
-                    }
-                }
+                try {
+                    const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
+                    const videoTracks = videoStream.getVideoTracks();
+                    if(videoTracks.length > 0) track = videoTracks[0]; // Corrección para extraer el track individual activo
+                } catch (e) {}
                 
                 const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                if (audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                }
-
+                // Filtro pasa-bajos agresivo a 150Hz enfocado puramente en los golpes del bajo (Kicks/Bass)
                 const filtroEnfoque = audioContext.createBiquadFilter();
                 filtroEnfoque.type = "lowpass";
                 filtroEnfoque.frequency.setValueAtTime(150, audioContext.currentTime);
@@ -90,7 +76,7 @@
                 microphone = audioContext.createMediaStreamSource(audioStream);
                 javascriptNode = audioContext.createScriptProcessor(1024, 1, 1);
 
-                analyser.smoothingTimeConstant = 0.08; 
+                analyser.smoothingTimeConstant = 0.08; // Respuesta súper rápida a los impactos de sonido
                 analyser.fftSize = 256;
 
                 microphone.connect(filtroEnfoque);
@@ -106,6 +92,7 @@
                     calibrando = false;
                     if(ruidosCapturados.length > 0) {
                         const promedioRuidoBase = ruidosCapturados.reduce((a, b) => a + b, 0) / ruidosCapturados.length;
+                        // Escalado matemático dinámico
                         umbralDinamico = Math.max(promedioRuidoBase * MULTIPLICADOR_UMBRAL, 35); 
                     }
                     statusText.innerText = "¡Sincronizado! Disfruta el show.";
@@ -117,6 +104,7 @@
                     analyser.getByteFrequencyData(array);
                     let values = 0;
                     
+                    // Medimos estrictamente las frecuencias más bajas (sub-lows del estadio)
                     const rangoMusical = Math.min(array.length, 8); 
                     for (let i = 0; i < rangoMusical; i++) { values += array[i]; }
                     const promedioVolumen = values / rangoMusical;
@@ -132,11 +120,13 @@
                                 ejecutarParpadeo(true); 
                                 ultimoTiempoParpadeo = ahora;
                             } else if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte > 80)) {
+                                // Permite apagar rápido si el golpe de dBs ya bajó
                                 ejecutarParpadeo(false);
                                 ultimoTiempoParpadeo = ahora;
                             }
                         }
 
+                        // Corte de seguridad inmediato si hay silencio prolongado
                         if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte >= TIEMPO_APAGADO_PANTALLA)) {
                             ejecutarParpadeo(false);
                         }
@@ -144,28 +134,27 @@
                 };
             } catch (err) {
                 statusText.innerText = "Error de permisos o hardware.";
-                console.error(err);
             }
         });
 
+        // Alternador de color interno para crear el efecto estroboscópico de alto impacto
         let toggleColor = false;
 
         function ejecutarParpadeo(activar) {
-            if (activar === estadoLuzActual && COOLDOWN_PARPADEO < 50) return; 
             estadoLuzActual = activar;
 
             if (activar) {
+                // Al activarse alterna rápidamente entre blanco brillante y rojo neón para máxima notoriedad a la distancia
                 bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000"; 
                 toggleColor = !toggleColor;
 
-                // Control robusto del flash para Android
                 if (track && typeof track.applyConstraints === 'function') {
-                    track.applyConstraints({ advanced: [{ torch: true }] }).catch((err) => console.log("Fallo encendido torch", err));
+                    track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
                 }
             } else {
-                bodyElement.style.backgroundColor = "#050505"; 
+                bodyElement.style.backgroundColor = "#050505"; // Oscuridad absoluta en los valles de sonido
                 if (track && typeof track.applyConstraints === 'function') {
-                    track.applyConstraints({ advanced: [{ torch: false }] }).catch((err) => console.log("Fallo apagado torch", err));
+                    track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
                 }
             }
         }
