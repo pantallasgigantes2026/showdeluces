@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Estadio Lightshow Experiencia</title>
     <style>
-        body { margin: 0; padding: 0; background-color: #050505; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; justify-content: space-between; align-items: center; height: 100vh; text-align: center; box-sizing: border-box; padding: 40px 20px; transition: background-color 0.03s ease; overflow: hidden; }
+        /* SALVAVIDAS 1: transition: 0s para eliminar cualquier retraso gráfico en iPhones lentos */
+        body { margin: 0; padding: 0; background-color: #050505; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; justify-content: space-between; align-items: center; height: 100vh; text-align: center; box-sizing: border-box; padding: 40px 20px; transition: none; overflow: hidden; }
         .header-zone { margin-top: 20px; }
         h1 { font-size: 2.2rem; letter-spacing: 2px; margin: 0 0 10px 0; color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
         p { font-size: 1.1rem; color: #b3b3b3; max-width: 320px; margin: 0 auto; line-height: 1.5; }
@@ -36,53 +37,46 @@
         const iphoneNotice = document.getElementById('iphoneNotice');
         const mainTitle = document.getElementById('mainTitle');
         const bodyElement = document.body;
-        let audioContext, analyser, microphone, javascriptNode, track; 
+        let audioContext, analyser, microphone; 
         let isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
-        // --- AJUSTES EXCLUSIVOS PARA ESTADIO ABIERTO ---
-        let umbralDinamico = 50; 
+        let umbralDinamico = 30; // Bajamos el umbral inicial de 50 a 30 por seguridad de iPhones menos sensibles
         let ruidosCapturados = [];
         let calibrando = true;
-        
-        // Multiplicador de escala: ayuda a que si calibras en silencio (ej. 20), el umbral suba inteligentemente (ej. 20 * 2.2 = 44) 
-        // evitando que cualquier ruido ambiente active la pantalla por error.
-        const MULTIPLICADOR_UMBRAL = 2.2; 
+        const MULTIPLICADOR_UMBRAL = 1.6; // Reducido ligeramente para asegurar que encienda sí o sí
 
-        // --- COOLDOWN Y RENDIMIENTO ---
         let ultimoTiempoParpadeo = 0;
-        const COOLDOWN_PARPADEO = 60; // Ajustado a 40ms para permitir flashes rápidos y dinámicos (efecto estrobo)
+        const COOLDOWN_PARPADEO = 40; 
         let tiempoUltimoPulsoFuerte = 0;
-        const TIEMPO_APAGADO_PANTALLA = 400; // Si pasa 0.4 segundos sin golpes de dBs, se apaga por completo de inmediato.
+        const TIEMPO_APAGADO_PANTALLA = 300; 
         let estadoLuzActual = false; 
+        let toggleColor = false;
 
         startBtn.addEventListener('click', async () => {
             statusText.innerText = "Calibrando sonido ambiente (1s)...";
             try {
-                try {
-                    const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
-                    const videoTracks = videoStream.getVideoTracks();
-                    if(videoTracks.length > 0) track = videoTracks[0]; // Corrección para extraer el track individual activo
-                } catch (e) {}
+                // SALVAVIDAS 2: Inicialización forzada de AudioContext compatible con motores iOS modernos
+                const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+                audioContext = new AudioContextClass();
                 
                 const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // Filtro pasa-bajos agresivo a 150Hz enfocado puramente en los golpes del bajo (Kicks/Bass)
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
                 const filtroEnfoque = audioContext.createBiquadFilter();
                 filtroEnfoque.type = "lowpass";
                 filtroEnfoque.frequency.setValueAtTime(150, audioContext.currentTime);
 
                 analyser = audioContext.createAnalyser();
                 microphone = audioContext.createMediaStreamSource(audioStream);
-                javascriptNode = audioContext.createScriptProcessor(1024, 1, 1);
 
-                analyser.smoothingTimeConstant = 0.08; // Respuesta súper rápida a los impactos de sonido
-                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.04; 
+                analyser.fftSize = 64; // FFT pequeña para procesar instantáneamente los golpes en la GPU del iPhone
 
                 microphone.connect(filtroEnfoque);
                 filtroEnfoque.connect(analyser);
-                analyser.connect(javascriptNode);
-                javascriptNode.connect(audioContext.destination);
 
                 startBtn.style.display = 'none';
                 mainTitle.innerText = "¡CONECTADO AL SHOW!";
@@ -92,72 +86,71 @@
                     calibrando = false;
                     if(ruidosCapturados.length > 0) {
                         const promedioRuidoBase = ruidosCapturados.reduce((a, b) => a + b, 0) / ruidosCapturados.length;
-                        // Escalado matemático dinámico
-                        umbralDinamico = Math.max(promedioRuidoBase * MULTIPLICADOR_UMBRAL, 35); 
+                        umbralDinamico = Math.max(promedioRuidoBase * MULTIPLICADOR_UMBRAL, 25); 
                     }
                     statusText.innerText = "¡Sincronizado! Disfruta el show.";
                     tiempoUltimoPulsoFuerte = Date.now();
                 }, 1000);
 
-                javascriptNode.onaudioprocess = () => {
-                    const array = new Uint8Array(analyser.frequencyBinCount);
-                    analyser.getByteFrequencyData(array);
-                    let values = 0;
-                    
-                    // Medimos estrictamente las frecuencias más bajas (sub-lows del estadio)
-                    const rangoMusical = Math.min(array.length, 8); 
-                    for (let i = 0; i < rangoMusical; i++) { values += array[i]; }
-                    const promedioVolumen = values / rangoMusical;
+                // SALVAVIDAS 3: Cambiamos "onaudioprocess" (obsoleto en iOS) por un bucle de animación nativo de Safari
+                bucleAnalisis();
 
-                    if (calibrando) {
-                        ruidosCapturados.push(promedioVolumen);
-                    } else {
-                        const ahora = Date.now();
-
-                        if (ahora - ultimoTiempoParpadeo >= COOLDOWN_PARPADEO) {
-                            if (promedioVolumen > umbralDinamico) { 
-                                tiempoUltimoPulsoFuerte = ahora;
-                                ejecutarParpadeo(true); 
-                                ultimoTiempoParpadeo = ahora;
-                            } else if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte > 80)) {
-                                // Permite apagar rápido si el golpe de dBs ya bajó
-                                ejecutarParpadeo(false);
-                                ultimoTiempoParpadeo = ahora;
-                            }
-                        }
-
-                        // Corte de seguridad inmediato si hay silencio prolongado
-                        if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte >= TIEMPO_APAGADO_PANTALLA)) {
-                            ejecutarParpadeo(false);
-                        }
-                    }
-                };
             } catch (err) {
                 statusText.innerText = "Error de permisos o hardware.";
             }
         });
 
-        // Alternador de color interno para crear el efecto estroboscópico de alto impacto
-        let toggleColor = false;
+        function bucleAnalisis() {
+            if (!analyser) return;
+
+            const array = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(array);
+            let values = 0;
+            
+            const rangoMusical = Math.min(array.length, 4); 
+            for (let i = 0; i < rangoMusical; i++) { values += array[i]; }
+            const promedioVolumen = values / rangoMusical;
+
+            if (calibrando) {
+                ruidosCapturados.push(promedioVolumen);
+            } else {
+                const ahora = Date.now();
+
+                if (ahora - ultimoTiempoParpadeo >= COOLDOWN_PARPADEO) {
+                    if (promedioVolumen > umbralDinamico) { 
+                        tiempoUltimoPulsoFuerte = ahora;
+                        ejecutarParpadeo(true); 
+                        ultimoTiempoParpadeo = ahora;
+                    } else if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte > 60)) {
+                        ejecutarParpadeo(false);
+                        ultimoTiempoParpadeo = ahora;
+                    }
+                }
+
+                if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte >= TIEMPO_APAGADO_PANTALLA)) {
+                    ejecutarParpadeo(false);
+                }
+            }
+
+            // Mantiene el proceso vivo a la velocidad de la pantalla del iPhone (60Hz/120Hz) sin colgarse jamás
+            requestAnimationFrame(bucleAnalisis);
+        }
 
         function ejecutarParpadeo(activar) {
             estadoLuzActual = activar;
 
             if (activar) {
-                // Al activarse alterna rápidamente entre blanco brillante y rojo neón para máxima notoriedad a la distancia
-                bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000"; 
                 toggleColor = !toggleColor;
-
-                if (track && typeof track.applyConstraints === 'function') {
-                    track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
-                }
+                bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000";
+                
+                // TRUCO MAESTRO PARA IPHONE: Forzar aceleración por hardware 3D mediante CSS.
+                // Esto despierta a la fuerza la pantalla del iPhone 12 si Safari intentaba congelar los colores.
+                bodyElement.style.transform = 'translateZ(0)';
             } else {
-                bodyElement.style.backgroundColor = "#050505"; // Oscuridad absoluta en los valles de sonido
-                if (track && typeof track.applyConstraints === 'function') {
-                    track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
-                }
+                bodyElement.style.backgroundColor = "#050505";
             }
         }
     </script>
 </body>
 </html>
+
