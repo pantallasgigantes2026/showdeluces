@@ -45,7 +45,7 @@
         const MULTIPLICADOR_UMBRAL = 1.6; 
 
         let ultimoTiempoParpadeo = 0;
-        const COOLDOWN_PARPADEO = 50; 
+        const COOLDOWN_PARPADEO = 40; 
         let tiempoUltimoPulsoFuerte = 0;
         const TIEMPO_APAGADO_PANTALLA = 300; 
         let estadoLuzActual = false; 
@@ -54,13 +54,20 @@
         startBtn.addEventListener('click', async () => {
             statusText.innerText = "Calibrando sonido ambiente (1s)...";
             try {
-                // RECUPERADO: Encendemos la cámara trasera para habilitar el hardware del flash
+                // OPTIMIZACIÓN ANDROID/iOS: Pedimos video en resolución mínima (64x64) para ahorrar batería y forzar la linterna sin lag de cámara
                 try {
-                    const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
+                    const videoStream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            facingMode: { exact: "environment" },
+                            width: { ideal: 64 },
+                            height: { ideal: 64 }
+                        } 
+                    });
                     const videoTracks = videoStream.getVideoTracks();
-                    if(videoTracks.length > 0) track = videoTracks[0];
+                    // CORRECCIÓN ANDROID: Extraemos estrictamente el primer track individual activo
+                    if(videoTracks.length > 0) track = videoTracks[0]; 
                 } catch (e) {
-                    console.log("No se pudo acceder a la linterna trasera en este dispositivo.");
+                    console.log("Linterna trasera no disponible en este navegador o sistema.");
                 }
                 
                 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -149,19 +156,29 @@
                 bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000";
                 bodyElement.style.transform = 'translateZ(0)';
 
-                // MEJORA: Intenta encender la linterna trasera físicamente en dispositivos compatibles
-                if (track && typeof track.getCapabilities === 'function') {
-                    const capabilities = track.getCapabilities();
-                    if (capabilities.torch) {
-                        track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
-                    }
+                // FORZAR LINTERNA EN ANDROID Y COMPATIBLES
+                if (track) {
+                    try {
+                        // Verificamos si el navegador soporta leer las capacidades físicas del hardware
+                        if (typeof track.getCapabilities === 'function') {
+                            const capabilities = track.getCapabilities();
+                            if (capabilities.torch) {
+                                track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
+                            }
+                        } else {
+                            // Salvavidas para navegadores Android antiguos que soportan torch directo sin validar capabilities
+                            track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
+                        }
+                    } catch(e) {}
                 }
             } else {
                 bodyElement.style.backgroundColor = "#050505";
 
-                // MEJORA: Apaga la linterna trasera físicamente de inmediato en el silencio
-                if (track && typeof track.getCapabilities === 'function') {
-                    track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+                // APAGAR LINTERNA DE INMEDIATO
+                if (track) {
+                    try {
+                        track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+                    } catch(e) {}
                 }
             }
         }
