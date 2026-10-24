@@ -81,7 +81,7 @@
                     if(ruidosCapturados.length > 0) {
                         const promedioRuidoBase = ruidosCapturados.reduce((a, b) => a + b, 0) / ruidosCapturados.length;
                         // Ajuste de sensibilidad óptimo sobre el ruido base medido
-                        umbralDinamico = promedioRuidoBase + 15; 
+                        umbralDinamico = promedioRuidoBase + 40; 
                     }
                     statusText.innerText = "¡Sincronizado! Disfruta el show.";
                 }, 1000);
