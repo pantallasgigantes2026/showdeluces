@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Estadio Lightshow Experiencia</title>
     <style>
-        /* SALVAVIDAS 1: transition: 0s para eliminar cualquier retraso gráfico en iPhones lentos */
         body { margin: 0; padding: 0; background-color: #050505; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; justify-content: space-between; align-items: center; height: 100vh; text-align: center; box-sizing: border-box; padding: 40px 20px; transition: none; overflow: hidden; }
         .header-zone { margin-top: 20px; }
         h1 { font-size: 2.2rem; letter-spacing: 2px; margin: 0 0 10px 0; color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
@@ -37,13 +36,13 @@
         const iphoneNotice = document.getElementById('iphoneNotice');
         const mainTitle = document.getElementById('mainTitle');
         const bodyElement = document.body;
-        let audioContext, analyser, microphone; 
+        let audioContext, analyser, microphone, track; 
         let isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
-        let umbralDinamico = 30; // Bajamos el umbral inicial de 50 a 30 por seguridad de iPhones menos sensibles
+        let umbralDinamico = 30; 
         let ruidosCapturados = [];
         let calibrando = true;
-        const MULTIPLICADOR_UMBRAL = 1.6; // Reducido ligeramente para asegurar que encienda sí o sí
+        const MULTIPLICADOR_UMBRAL = 1.6; 
 
         let ultimoTiempoParpadeo = 0;
         const COOLDOWN_PARPADEO = 40; 
@@ -55,7 +54,15 @@
         startBtn.addEventListener('click', async () => {
             statusText.innerText = "Calibrando sonido ambiente (1s)...";
             try {
-                // SALVAVIDAS 2: Inicialización forzada de AudioContext compatible con motores iOS modernos
+                // RECUPERADO: Encendemos la cámara trasera para habilitar el hardware del flash
+                try {
+                    const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
+                    const videoTracks = videoStream.getVideoTracks();
+                    if(videoTracks.length > 0) track = videoTracks[0];
+                } catch (e) {
+                    console.log("No se pudo acceder a la linterna trasera en este dispositivo.");
+                }
+                
                 const AudioContextClass = window.AudioContext || window.webkitAudioContext;
                 audioContext = new AudioContextClass();
                 
@@ -73,7 +80,7 @@
                 microphone = audioContext.createMediaStreamSource(audioStream);
 
                 analyser.smoothingTimeConstant = 0.04; 
-                analyser.fftSize = 64; // FFT pequeña para procesar instantáneamente los golpes en la GPU del iPhone
+                analyser.fftSize = 64; 
 
                 microphone.connect(filtroEnfoque);
                 filtroEnfoque.connect(analyser);
@@ -92,7 +99,6 @@
                     tiempoUltimoPulsoFuerte = Date.now();
                 }, 1000);
 
-                // SALVAVIDAS 3: Cambiamos "onaudioprocess" (obsoleto en iOS) por un bucle de animación nativo de Safari
                 bucleAnalisis();
 
             } catch (err) {
@@ -132,7 +138,6 @@
                 }
             }
 
-            // Mantiene el proceso vivo a la velocidad de la pantalla del iPhone (60Hz/120Hz) sin colgarse jamás
             requestAnimationFrame(bucleAnalisis);
         }
 
@@ -142,15 +147,24 @@
             if (activar) {
                 toggleColor = !toggleColor;
                 bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000";
-                
-                // TRUCO MAESTRO PARA IPHONE: Forzar aceleración por hardware 3D mediante CSS.
-                // Esto despierta a la fuerza la pantalla del iPhone 12 si Safari intentaba congelar los colores.
                 bodyElement.style.transform = 'translateZ(0)';
+
+                // MEJORA: Intenta encender la linterna trasera físicamente en dispositivos compatibles
+                if (track && typeof track.getCapabilities === 'function') {
+                    const capabilities = track.getCapabilities();
+                    if (capabilities.torch) {
+                        track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
+                    }
+                }
             } else {
                 bodyElement.style.backgroundColor = "#050505";
+
+                // MEJORA: Apaga la linterna trasera físicamente de inmediato en el silencio
+                if (track && typeof track.getCapabilities === 'function') {
+                    track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+                }
             }
         }
     </script>
 </body>
 </html>
-
