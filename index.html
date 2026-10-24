@@ -50,7 +50,7 @@
 
         // --- COOLDOWN Y RENDIMIENTO ---
         let ultimoTiempoParpadeo = 0;
-        const COOLDOWN_PARPADEO = 40; // Ajustado a 40ms para permitir flashes rápidos y dinámicos (efecto estrobo)
+        const COOLDOWN_PARPADEO = 60; // Ajustado a 40ms para permitir flashes rápidos y dinámicos (efecto estrobo)
         let tiempoUltimoPulsoFuerte = 0;
         const TIEMPO_APAGADO_PANTALLA = 400; // Si pasa 0.4 segundos sin golpes de dBs, se apaga por completo de inmediato.
         let estadoLuzActual = false; 
@@ -145,7 +145,7 @@
 
             if (activar) {
                 // Al activarse alterna rápidamente entre blanco brillante y rojo neón para máxima notoriedad a la distancia
-                bodyElement.style.backgroundColor = toggleColor ? "#ffffff" : "#ff003c"; 
+                bodyElement.style.backgroundColor = toggleColor ? "#721227" : "#5A0000"; 
                 toggleColor = !toggleColor;
 
                 if (track && typeof track.applyConstraints === 'function') {
