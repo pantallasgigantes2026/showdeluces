@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Estadio Lightshow Experiencia</title>
     <style>
-        body { margin: 0; padding: 0; background-color: #050505; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; justify-content: space-between; align-items: center; height: 100vh; text-align: center; box-sizing: border-box; padding: 40px 20px; transition: background-color 0.02s ease; overflow: hidden; }
+        body { margin: 0; padding: 0; background-color: #050505; color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; display: flex; flex-direction: column; justify-content: space-between; align-items: center; height: 100vh; text-align: center; box-sizing: border-box; padding: 40px 20px; transition: background-color 0.05s ease; overflow: hidden; }
         .header-zone { margin-top: 20px; }
         h1 { font-size: 2.2rem; letter-spacing: 2px; margin: 0 0 10px 0; color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }
         p { font-size: 1.1rem; color: #b3b3b3; max-width: 320px; margin: 0 auto; line-height: 1.5; }
@@ -39,31 +39,40 @@
         let audioContext, analyser, microphone, javascriptNode, track; 
         let isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
+        // --- PARÁMETROS DE CALIBRACIÓN Y AJUSTES DE DBs ---
         let umbralDinamico = 40; 
         let ruidosCapturados = [];
         let calibrando = true;
+        const AJUSTE_SENSIBILIDAD_DBS = 25; // Reducido de 40 a 25 para evitar que el ruido del estadio sature y la luz se quede fija.
+
+        // --- SISTEMA DE COOLDOWN Y APAGADO DE PANTALLA ---
+        let ultimoTiempoParpadeo = 0;
+        const COOLDOWN_PARPADEO = 60; // (ms) Tiempo mínimo entre cambios de estado para no saturar el procesador/hardware.
+        let tiempoUltimoPulsoFuerte = 0;
+        const TIEMPO_APAGADO_PANTALLA = 800; // (ms) Si no hay golpes de audio en 800ms, fuerza el apagado a negro.
+        let estadoLuzActual = false; 
 
         startBtn.addEventListener('click', async () => {
             statusText.innerText = "Calibrando sonido ambiente (1s)...";
             try {
                 try {
                     const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: "environment" } } });
-                    track = videoStream.getVideoTracks();
+                    // CORRECCIÓN INTERNA: Seleccionar el primer track activo del array para que funcione applyConstraints
+                    track = videoStream.getVideoTracks()[0]; 
                 } catch (e) {}
                 
                 const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // Filtro para capturar bajos y cuerpo medio de las frecuencias musicales (420Hz)
                 const filtroEnfoque = audioContext.createBiquadFilter();
                 filtroEnfoque.type = "lowpass";
                 filtroEnfoque.frequency.setValueAtTime(420, audioContext.currentTime);
 
                 analyser = audioContext.createAnalyser();
                 microphone = audioContext.createMediaStreamSource(audioStream);
-                javascriptNode = audioContext.createScriptProcessor(1024, 1, 1); // Bloque de procesamiento más pequeño para calibrar más rápido
+                javascriptNode = audioContext.createScriptProcessor(1024, 1, 1);
 
-                analyser.smoothingTimeConstant = 0.12;
+                analyser.smoothingTimeConstant = 0.15; // Un poco más alto para estabilizar saltos bruscos
                 analyser.fftSize = 256;
 
                 microphone.connect(filtroEnfoque);
@@ -75,15 +84,15 @@
                 mainTitle.innerText = "¡CONECTADO AL SHOW!";
                 if (isIos) iphoneNotice.style.display = "block";
 
-                // CAMBIO A 1 SEGUNDO (1000 milisegundos)
                 setTimeout(() => {
                     calibrando = false;
                     if(ruidosCapturados.length > 0) {
                         const promedioRuidoBase = ruidosCapturados.reduce((a, b) => a + b, 0) / ruidosCapturados.length;
-                        // Ajuste de sensibilidad óptimo sobre el ruido base medido
-                        umbralDinamico = promedioRuidoBase + 40; 
+                        // Usamos la nueva constante calibrada
+                        umbralDinamico = promedioRuidoBase + AJUSTE_SENSIBILIDAD_DBS; 
                     }
                     statusText.innerText = "¡Sincronizado! Disfruta el show.";
+                    tiempoUltimoPulsoFuerte = Date.now();
                 }, 1000);
 
                 javascriptNode.onaudioprocess = () => {
@@ -98,10 +107,24 @@
                     if (calibrando) {
                         ruidosCapturados.push(promedioVolumen);
                     } else {
-                        if (promedioVolumen > umbralDinamico) { 
-                            ejecutarParpadeo(true); 
-                        } else { 
-                            ejecutarParpadeo(false); 
+                        const ahora = Date.now();
+
+                        // 1. EVALUAR AUDIO CON COOLDOWN (Previene saturación de peticiones lógicas)
+                        if (ahora - ultimoTiempoParpadeo >= COOLDOWN_PARPADEO) {
+                            if (promedioVolumen > umbralDinamico) { 
+                                tiempoUltimoPulsoFuerte = ahora; // Registramos que hubo sonido
+                                ejecutarParpadeo(true); 
+                                ultimoTiempoParpadeo = ahora;
+                            } else if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte > 150)) {
+                                // Apagar solo si ya pasó el pico del pulso actual (150ms mínimos de luz)
+                                ejecutarParpadeo(false);
+                                ultimoTiempoParpadeo = ahora;
+                            }
+                        }
+
+                        // 2. TEMPORIZADOR DE APAGADO DE SEGURIDAD (Si hay silencio prolongado, apagar pantalla)
+                        if (estadoLuzActual && (ahora - tiempoUltimoPulsoFuerte >= TIEMPO_APAGADO_PANTALLA)) {
+                            ejecutarParpadeo(false);
                         }
                     }
                 };
@@ -111,14 +134,19 @@
         });
 
         function ejecutarParpadeo(activar) {
+            // Evitamos enviar comandos repetidos innecesariamente al hardware/pantalla si ya está en ese estado
+            if (activar === estadoLuzActual) return; 
+            
+            estadoLuzActual = activar;
+
             if (activar) {
                 bodyElement.style.backgroundColor = "#721227"; 
-                if (track && track && typeof track.applyConstraints === 'function') {
+                if (track && typeof track.applyConstraints === 'function') {
                     track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
                 }
             } else {
                 bodyElement.style.backgroundColor = "#050505";
-                if (track && track && typeof track.applyConstraints === 'function') {
+                if (track && typeof track.applyConstraints === 'function') {
                     track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
                 }
             }
